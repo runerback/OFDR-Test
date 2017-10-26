@@ -1,0 +1,10 @@
+
+bin
+obj
+*.csproj
+*.csproj.user
+*.sln
+*.sln.user
+*.suo
+properties
+packages
