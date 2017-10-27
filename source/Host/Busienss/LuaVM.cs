@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Host
 {
@@ -18,42 +19,98 @@ namespace Host
 			state["OFP"] = new OFP();
 			this.global_state = state;
 
-			state["scripts"] = new scripts();
-			state.NewTable("scripts_mission");
-			scripts.mission = state.GetTable("scripts_mission");
+			string pathChunk = string.Format(@"package.path = ""{0}""",
+				Environment.CurrentDirectory + "\\scripts\\?.lua")
+				.Replace("\\", "/");
+			state.DoString(pathChunk); //set package.path
+
+			state.NewTable("scripts");
+			state.NewTable("scripts.mission");
+
+			state.DoString(_call);
+			this.call = state.GetFunction("call");
 
 			loadScripts();
 
-			//create scripts.mission in sub Lua states, and copy data from global state
-			foreach (DictionaryEntry pair0 in scripts.mission)
+			//check module states
+			if (System.Diagnostics.Debugger.IsAttached)
 			{
-				var subState = pair0.Value as Lua;
-				subState.NewTable("scripts");
-				subState.NewTable("scripts.mission");
-				var mission = subState.GetTable("scripts.mission");
-				foreach (DictionaryEntry pair1 in scripts.mission)
-				{
-					mission[pair1.Key] = pair1.Value;
-				}
+				state.DoString(@"
+OFP:displaySystemMessage(""listing functions..."")
+for k, v in pairs(scripts.mission) do
+OFP:displaySystemMessage(""\t""..k)
+for k1, _ in pairs(v) do
+OFP:displaySystemMessage(""\t\t""..k1)
+end
+end
+");
 			}
 		}
 
+		private static readonly string _call = @"function call(name, ...)
+--OFP:displaySystemMessage(""calling ""..name)
+for k, v in pairs(scripts.mission) do
+--OFP:displaySystemMessage(""searching in ""..k)
+if v[name] then
+--OFP:displaySystemMessage(""found in ""..k)
+v[name](...)
+else
+--OFP:displaySystemMessage(""not found"")
+end
+end
+end";
+		private LuaFunction call;
+
 		/// <summary>
-		/// load all lua scripts in "scripts" folder
+		/// load all lua scripts in "scripts" folder. the order is: waypoints, level, others
 		/// </summary>
 		private void loadScripts()
 		{
-			var global_state = this.global_state;
-
-			foreach (string file in Directory.GetFiles("scripts", "*.lua"))
+			var scriptFiles = Directory.GetFiles("scripts", "*.lua");
+			var scripts = new Dictionary<string, string>(scriptFiles.Length);
+			scripts.Add("waypoints", null);
+			scripts.Add("level", null);
+			foreach (var file in scriptFiles)
 			{
+				string content = File.ReadAllText(file);
 				string scriptName = Path.GetFileNameWithoutExtension(file);
 
-				Lua state = new Lua();
-				state.DoFile(file);
+				if (scriptName == "waypoints")
+					scripts[scriptName] = content;
+				else if (scriptName == "level")
+					scripts[scriptName] = content;
+				else
+					scripts.Add(scriptName, content);
+			}
 
-				state["OFP"] = global_state["OFP"]; //transfer OFP build-in function object
-				scripts.mission[scriptName] = state; //add current script to scripts.mission
+			var global_state = this.global_state;
+			var regex = new Regex(@"function\s+(?<func>\w+)\s*|(?<func>\w+)\s*\=\s*function");
+			foreach (var script in scripts)
+			{
+				string scriptName = script.Key;
+				string scriptContent = script.Value;
+
+				StringBuilder builder = new StringBuilder();
+				builder.AppendFormat("{0} = {{}}\n", scriptName);
+
+				//pack scripts
+				int index = 0;
+				var matches = regex.Matches(scriptContent);
+				foreach (var group in matches
+					.Cast<Match>()
+					.Select(match => match.Groups["func"])
+					.Where(group => group.Success))
+				{
+					builder.Append(scriptContent.Substring(index, group.Index - index));
+					builder.AppendFormat("{0}.", scriptName);
+					builder.Append(group.Value);
+					index = group.Index + group.Length;
+				}
+				builder.Append(scriptContent.Substring(index));
+				string packableScript = builder.ToString();
+
+				global_state.DoString(packableScript);
+				global_state.DoString(string.Format(@"scripts.mission[""{0}""] = {0}", scriptName));
 			}
 		}
 
@@ -62,25 +119,11 @@ namespace Host
 		/// </summary>
 		internal void Call(string functionName, params object[] args)
 		{
-			foreach (DictionaryEntry script in scripts.mission)
-			{
-				string scriptName = (string)script.Key;
-				if (scriptName == "level" || scriptName == "waypoints")
-				{
-					Console.WriteLine("calling function \"{0}\" in script \"{1}\"", functionName, scriptName);
-
-					var state = script.Value as Lua;
-
-					var func = state.GetFunction(functionName);
-					if (func != null) 
-						func.Call(args);
-				}
-			}
+			this.call.Call(functionName, args);
 		}
 
 		public void Dispose()
 		{
-			scripts.mission.Dispose();
 			this.global_state.Dispose();
 		}
 	}

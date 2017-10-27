@@ -1,6 +1,8 @@
 
 bin
 obj
+*.xaml
+*.xaml.cs
 *.csproj
 *.csproj.user
 *.sln
