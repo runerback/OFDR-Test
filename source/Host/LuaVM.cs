@@ -1,29 +1,44 @@
 ﻿using LuaInterface;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Host
+namespace OFDR.Host
 {
-	public class LuaVM : IDisposable
+	internal class LuaVM : IDisposable
 	{
 		private Lua global_state;
 
-		public LuaVM()
+		public LuaVM(OFP ofp)
 		{
 			var state = new Lua();
-			state["OFP"] = new OFP();
+			state["OFP"] = ofp;
 			this.global_state = state;
 
 			state.NewTable("scripts");
 			state.NewTable("scripts.mission");
 
-			state.DoString(_call);
-			this.call = state.GetFunction("call");
+			state.DoString(@"
+function callback(name, ...)
+	--OFP:displaySystemMessage(""calling ""..name)
+	for k, v in pairs(scripts.mission) do
+		--OFP:displaySystemMessage(""searching in ""..k)
+		if k == ""waypoints"" or k == ""level"" then
+			if v[name] then
+				--OFP:displaySystemMessage(""found in ""..k)
+				v[name](...)
+			else
+				--OFP:displaySystemMessage(""not found"")
+			end
+		end
+	end
+end
+"
+				);
+			this.callback = state.GetFunction("callback");
 
 			loadScripts();
 
@@ -33,28 +48,16 @@ namespace Host
 				state.DoString(@"
 OFP:displaySystemMessage(""listing functions..."")
 for k, v in pairs(scripts.mission) do
-OFP:displaySystemMessage(""\t""..k)
-for k1, _ in pairs(v) do
-OFP:displaySystemMessage(""\t\t""..k1)
-end
+	OFP:displaySystemMessage(""\t""..k)
+	for k1, _ in pairs(v) do
+		OFP:displaySystemMessage(""\t\t""..k1)
+	end
 end
 ");
 			}
 		}
 
-		private static readonly string _call = @"function call(name, ...)
---OFP:displaySystemMessage(""calling ""..name)
-for k, v in pairs(scripts.mission) do
---OFP:displaySystemMessage(""searching in ""..k)
-if v[name] then
---OFP:displaySystemMessage(""found in ""..k)
-v[name](...)
-else
---OFP:displaySystemMessage(""not found"")
-end
-end
-end";
-		private LuaFunction call;
+		private LuaFunction callback;
 
 		/// <summary>
 		/// load all lua scripts in "scripts" folder. the order is: waypoints, level, others
@@ -104,6 +107,7 @@ end";
 				builder.Append(scriptContent.Substring(index));
 				string packableScript = builder.ToString();
 
+				//load package
 				global_state.DoString(packableScript);
 				global_state.DoString(string.Format(@"scripts.mission[""{0}""] = {0}", scriptName));
 			}
@@ -114,7 +118,7 @@ end";
 		/// </summary>
 		internal void Call(string functionName, params object[] args)
 		{
-			this.call.Call(functionName, args);
+			this.callback.Call(functionName, args);
 		}
 
 		public void Dispose()

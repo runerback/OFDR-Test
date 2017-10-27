@@ -22,4 +22,5 @@ function onMissionStart()
 		..tostring(scripts.mission.waypoints.simpleFunc))
 	--]]
 	scripts.mission.waypoints.simpleFunc()
+	OFP:missionCompleted()
 end
