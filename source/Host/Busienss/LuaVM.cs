@@ -19,11 +19,6 @@ namespace Host
 			state["OFP"] = new OFP();
 			this.global_state = state;
 
-			string pathChunk = string.Format(@"package.path = ""{0}""",
-				Environment.CurrentDirectory + "\\scripts\\?.lua")
-				.Replace("\\", "/");
-			state.DoString(pathChunk); //set package.path
-
 			state.NewTable("scripts");
 			state.NewTable("scripts.mission");
 
